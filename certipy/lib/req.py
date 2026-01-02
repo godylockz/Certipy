@@ -55,8 +55,8 @@ from certipy.lib.certificate import (
     load_pfx,
     pem_to_cert,
     pem_to_key,
-    print_certificate_serial_number,
     print_certificate_identities,
+    print_certificate_serial_number,
     x509,
 )
 from certipy.lib.ces import (
