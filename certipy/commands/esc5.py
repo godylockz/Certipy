@@ -108,7 +108,7 @@ from certipy.lib.certificate import (
 from certipy.lib.constants import ActiveDirectoryRights
 from certipy.lib.errors import handle_error
 from certipy.lib.files import try_to_save_file
-from certipy.lib.ldap import LDAPConnection, LDAPEntry
+from certipy.lib.ldap import LDAPConnection
 from certipy.lib.logger import logging
 from certipy.lib.security import INHERITED_ACE, is_admin_sid
 from certipy.lib.target import Target
@@ -636,7 +636,7 @@ class ESC5:
                     pki_object["check_cacert"],
                     pki_object["check_create_child"],
                 )
-                if right is None:
+                if sid is None or right is None:
                     continue
                 findings.append(
                     self._make_finding(pki_object, sid, inherited, right, bind_sids)
