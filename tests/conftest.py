@@ -135,11 +135,11 @@ Handler = Callable[[httpx.Request], httpx.Response]
 
 
 @pytest.fixture
-def mock_http() -> Iterator[Callable[[Handler], httpx.Client]]:
+def mock_http() -> Iterator[Callable[..., httpx.Client]]:
     clients: list[httpx.Client] = []
 
-    def factory(handler: Handler) -> httpx.Client:
-        client = httpx.Client(transport=httpx.MockTransport(handler))
+    def factory(handler: Handler, **client_kwargs: Any) -> httpx.Client:
+        client = httpx.Client(transport=httpx.MockTransport(handler), **client_kwargs)
         clients.append(client)
         return client
 

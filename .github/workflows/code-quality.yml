@@ -33,7 +33,7 @@ jobs:
 
       - name: Lint with flake8 (style and naming)
         run: |
-          flake8 ./certipy || (echo 'flake8 found issues. Run it locally with `flake8 .`' && exit 1)
+          flake8 ./certipy tests || (echo 'flake8 found issues. Run it locally with `flake8 .`' && exit 1)
 
       - name: Check import order with isort (black-compatible)
         run: |

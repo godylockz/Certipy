@@ -60,7 +60,9 @@ def test_der_to_pem_wraps_at_64_columns():
     lines = pem.splitlines()
     assert lines[0] == "-----BEGIN CERTIFICATE-----"
     assert lines[-1] == "-----END CERTIFICATE-----"
-    assert all(len(line) <= 64 for line in lines[1:-1])
+    body = lines[1:-1]
+    assert all(len(line) == 64 for line in body[:-1])
+    assert 0 < len(body[-1]) <= 64
 
 
 @pytest.mark.parametrize("password", [None, "Passw0rd!"])

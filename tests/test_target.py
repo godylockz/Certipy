@@ -144,3 +144,13 @@ def test_from_options_without_any_target_raises(resolver: FakeResolver):
 def test_kerberos_principal_none_without_ccache(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("KRB5CCNAME", raising=False)
     assert target_module.get_kerberos_principal() is None
+
+
+def test_from_options_kerberos_flag_skips_password_prompt(
+    resolver: FakeResolver, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.delenv("KRB5CCNAME", raising=False)
+    target = Target.from_options(_options(password=None, do_kerberos=True))
+    assert target.do_kerberos
+    assert (target.username, target.domain) == ("ALICE", "CORP.LOCAL")
+    assert target.password is None

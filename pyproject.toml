@@ -70,3 +70,6 @@ target-version = ['py312']
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+filterwarnings = [
+    "ignore::DeprecationWarning:ldap3.utils.asn1",
+]

@@ -40,6 +40,16 @@ def test_mock_http_routes_to_handler(
     assert client.get("http://ca.corp.local/certsrv/").text == "/certsrv/"
 
 
+def test_mock_http_passes_client_options(
+    mock_http: Callable[..., httpx.Client],
+):
+    client = mock_http(
+        lambda request: httpx.Response(200, text=str(request.url)),
+        base_url="http://ca.corp.local",
+    )
+    assert client.get("/certsrv/").text == "http://ca.corp.local/certsrv/"
+
+
 def test_make_ldap_entry_get(make_ldap_entry: Callable[..., LDAPEntry]):
     entry = make_ldap_entry({"cn": "CA", "empty": []}, raw_attributes={"cn": [b"CA"]})
     assert entry.get("cn") == "CA"
