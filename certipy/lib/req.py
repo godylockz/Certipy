@@ -551,6 +551,7 @@ def web_request(
     template: str,
     key: PrivateKeyTypes,
     out: Optional[str] = None,
+    ca_subpath: str = "",
 ) -> Optional[x509.Certificate]:
     """
     Request a certificate via the web enrollment interface.
@@ -600,7 +601,7 @@ def web_request(
     cert_request_timeout = max(session_read_timeout, 60)
     try:
         res = session.post(
-            "/certsrv/certfnsh.asp",
+            f"/certsrv/{(ca_subpath + '/') if ca_subpath else ''}certfnsh.asp",
             data=params,
             timeout=cert_request_timeout,
         )
@@ -617,7 +618,7 @@ def web_request(
         if request_id_matches:
             request_id = int(request_id_matches[0])
             logging.info(f"Certificate issued with request ID {request_id}")
-            return web_retrieve(session, request_id)
+            return web_retrieve(session, request_id, ca_subpath)
 
         # Handle various error conditions
         if "template that is not supported" in content:
@@ -632,7 +633,7 @@ def web_request(
                 if "Certificate Pending" in content:
                     logging.warning("Certificate request is pending approval")
                 elif '"Denied by Policy Module"' in content:
-                    _handle_policy_denial(session, request_id)
+                    _handle_policy_denial(session, request_id, ca_subpath)
                 else:
                     _handle_other_errors(content)
             else:
@@ -662,6 +663,7 @@ def web_request(
 def web_retrieve(
     session: httpx.Client,
     request_id: int,
+    ca_subpath: str = "",
 ) -> Optional[x509.Certificate]:
     """
     Retrieve a certificate via the web enrollment interface.
@@ -677,7 +679,10 @@ def web_retrieve(
 
     try:
         # Request the certificate
-        res = session.get("/certsrv/certnew.cer", params={"ReqID": request_id})
+        res = session.get(
+            f"/certsrv/{(ca_subpath + '/') if ca_subpath else ''}certnew.cer",
+            params={"ReqID": request_id},
+        )
 
         if res.status_code != 200:
             logging.error(f"Error retrieving certificate (HTTP {res.status_code})")
@@ -753,7 +758,9 @@ def _determine_output_filename(
     return fallback
 
 
-def _handle_policy_denial(session: httpx.Client, request_id: int) -> None:
+def _handle_policy_denial(
+    session: httpx.Client, request_id: int, ca_subpath: str = ""
+) -> None:
     """
     Handle certificate request denied by policy.
 
@@ -762,7 +769,10 @@ def _handle_policy_denial(session: httpx.Client, request_id: int) -> None:
         request_id: The certificate request ID
     """
     try:
-        res = session.get("/certsrv/certnew.cer", params={"ReqID": request_id})
+        res = session.get(
+            f"/certsrv/{(ca_subpath + '/') if ca_subpath else ''}certnew.cer",
+            params={"ReqID": request_id},
+        )
 
         error_codes = re.findall(
             r"(0x[a-zA-Z0-9]+) \([-]?[0-9]+ ", res.text, flags=re.MULTILINE
@@ -1310,7 +1320,7 @@ class WebRequestInterface:
 
         try:
             res = session.get(
-                "/certsrv/",
+                f"/certsrv/{(self.parent.ca_subpath + '/') if self.parent.ca_subpath else ''}",
                 headers=headers,
                 timeout=self.target.timeout,
                 follow_redirects=False,
@@ -1352,6 +1362,7 @@ class WebRequestInterface:
         return web_retrieve(
             self.session,
             request_id,
+            ca_subpath=self.parent.ca_subpath or "",
         )
 
     def request(
@@ -1382,6 +1393,7 @@ class WebRequestInterface:
             self.parent.template,
             self.parent.key,
             self.parent.out,
+            ca_subpath=self.parent.ca_subpath or "",
         )
 
 
@@ -1555,6 +1567,7 @@ class Request:
         self,
         target: Target,
         ca: Optional[str] = None,
+        ca_subpath: Optional[str] = None,
         template: str = "User",
         upn: Optional[str] = None,
         dns: Optional[str] = None,
@@ -1618,6 +1631,8 @@ class Request:
         # Core parameters
         self.target = target
         self.ca = ca
+        # Web Enrollment path segment between /certsrv/ and the .asp page
+        self.ca_subpath = ca_subpath.strip("/") if ca_subpath else ""
         self.template = template
         self.alt_upn = upn
         self.alt_dns = dns

@@ -81,6 +81,7 @@ def _make_attack(
         subject=None,
         key_size=2048,
         key_type=key_type,
+        ca_subpath="",
         application_policies=[],
         smime=None,
         archive_key=None,

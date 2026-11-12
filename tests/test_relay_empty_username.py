@@ -196,6 +196,7 @@ def make_relay_stub() -> SimpleNamespace:
         enum_templates=False,
         ces=False,
         key_type="rsa",
+        ca_subpath="",
         request_id=None,
         subject=None,
         alt_dns=None,

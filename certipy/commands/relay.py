@@ -473,7 +473,8 @@ class ADCSHTTPAttackClient(ProtocolAttack):
         """
 
         # Request the certificate request page
-        res = self.client.get("/certsrv/certrqxt.asp")
+        sp = self.adcs_relay.ca_subpath
+        res = self.client.get(f"/certsrv/{(sp + '/') if sp else ''}certrqxt.asp")
         content = res.text
 
         # Parse the HTML to extract templates
@@ -515,6 +516,7 @@ class ADCSHTTPAttackClient(ProtocolAttack):
         result = web_retrieve(
             self.client,
             request_id,
+            ca_subpath=self.adcs_relay.ca_subpath,
         )
 
         if result is not None:
@@ -599,6 +601,7 @@ class ADCSHTTPAttackClient(ProtocolAttack):
             template,
             key,
             self.adcs_relay.out,
+            ca_subpath=self.adcs_relay.ca_subpath,
         )
 
         if result is not None:
@@ -1045,6 +1048,7 @@ class Relay:
         self,
         target: Optional[str] = None,
         ca: Optional[str] = None,
+        ca_subpath: Optional[str] = None,
         template: Optional[str] = None,
         upn: Optional[str] = None,
         dns: Optional[str] = None,
@@ -1100,6 +1104,8 @@ class Relay:
             kwargs: Additional arguments
         """
         self.ca = ca
+        # Web Enrollment path segment between /certsrv/ and the .asp page
+        self.ca_subpath = ca_subpath.strip("/") if ca_subpath else ""
         self.template = template
         self.alt_upn = upn
         self.alt_dns = dns
@@ -1208,14 +1214,13 @@ class Relay:
                 "https://"
             ):
                 self.target = f"http://{self.target}"
-            if not self.target.endswith("/certsrv/certfnsh.asp"):
+            sp = self.ca_subpath
+            page = "certrqxt.asp" if self.enum_templates else "certfnsh.asp"
+            expected = f"/certsrv/{(sp + '/') if sp else ''}{page}"
+            if not self.target.endswith(expected):
                 if not self.target.endswith("/"):
                     self.target += "/"
-
-                if self.enum_templates:
-                    self.target += "certsrv/certrqxt.asp"
-                else:
-                    self.target += "certsrv/certfnsh.asp"
+                self.target += f"certsrv/{(sp + '/') if sp else ''}{page}"
             logging.info(f"Targeting {self.target} (ESC8)")
 
             url = httpx.URL(self.target)

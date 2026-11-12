@@ -80,6 +80,16 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> Tuple[str, Callable
         ),
     )
     cert_group.add_argument(
+        "-ca-subpath",
+        action="store",
+        metavar="path",
+        help=(
+            "Path segment between /certsrv/ and the enrollment page for Web "
+            "Enrollment (ESC8). Example: en-us gives "
+            "http://ca.corp.local/certsrv/en-us/certfnsh.asp"
+        ),
+    )
+    cert_group.add_argument(
         "-template",
         action="store",
         metavar="template name",

@@ -60,6 +60,16 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> Tuple[str, Callable
         metavar="certificate authority name",
         help="Name of the Certificate Authority to request certificates from. Required for RPC and DCOM methods, and for CES unless -ces-path is given",
     )
+    subparser.add_argument(
+        "-ca-subpath",
+        action="store",
+        metavar="path",
+        help=(
+            "Path segment between /certsrv/ and the enrollment page for Web "
+            "Enrollment (ESC8). Example: en-us gives "
+            "http://ca.corp.local/certsrv/en-us/certfnsh.asp"
+        ),
+    )
 
     # Certificate request parameters
     cert_group = subparser.add_argument_group("certificate request options")
