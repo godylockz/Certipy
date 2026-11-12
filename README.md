@@ -39,6 +39,19 @@ See the [Installation Guide](https://github.com/ly4k/Certipy/wiki/04-%E2%80%90-I
 
 See the [Quick Start Guide](https://github.com/ly4k/Certipy/wiki/05-%E2%80%90-Usage) for a quick overview of the most common commands and usage examples.
 
+### BloodHound
+
+`certipy find -bloodhound` writes `<prefix>_Certipy_BloodHound.zip` in the BloodHound CE
+format (certificate templates, enterprise/root/AIA CAs, the NTAuth store and issuance
+policies). BloodHound CE builds the ADCS attack paths (ESC1, ESC3, ESC4, ESC6, ESC9,
+ESC10, ESC13, GoldenCert) from these objects, so upload the zip into the same database
+as the domain's users, groups and computers from SharpHound, RustHound-CE or
+bloodhound-ce-python. CA registry data and web enrollment are only included when the
+CA is reachable (not with `-dc-only`).
+
+`certipy find -old-bloodhound` writes a legacy BloodHound 4.x zip in which templates
+and CAs appear as GPO nodes with their control and enrollment edges.
+
 ---
 
 ## 🎯 Supported AD CS Vulnerabilities

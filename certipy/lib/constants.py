@@ -595,3 +595,10 @@ EXTENDED_RIGHTS_MAP = {
 
 # Create reverse mapping from name to UUID for lookup by name
 EXTENDED_RIGHTS_NAME_MAP = {v: k for k, v in EXTENDED_RIGHTS_MAP.items()}
+
+# schemaIDGUIDs of template attributes whose write access enables ESC4 on its own:
+# writing the name flag enables ESC1 and the enrollment flag enables ESC9
+PKI_ATTRIBUTE_GUIDS = {
+    "ea1dddc4-60ff-416e-8cc0-17cee534bce7": "msPKI-Certificate-Name-Flag",
+    "d15ef7d8-f226-46db-ae79-b34e560bd12c": "msPKI-Enrollment-Flag",
+}

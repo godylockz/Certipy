@@ -92,6 +92,9 @@ class ActiveDirectorySecurity(SecurityDescriptorParser):
                     "inherited": bool(ace["AceFlags"] & INHERITED_ACE),
                     # Tracks if a standard ACCESS_ALLOWED_ACE grants control access (0x00000100)
                     "has_standard_control_access": False,
+                    # Attribute GUIDs from object ACEs that grant write property
+                    # on a single attribute
+                    "write_properties": [],
                 }
 
             # Process standard access allowed ACE
@@ -102,27 +105,38 @@ class ActiveDirectorySecurity(SecurityDescriptorParser):
                 if mask & ActiveDirectoryRights.EXTENDED_RIGHT:
                     self.aces[sid]["has_standard_control_access"] = True
 
-            # Process object-specific ACE (for extended rights)
-            elif ace["AceType"] == ldaptypes.ACCESS_ALLOWED_OBJECT_ACE.ACE_TYPE and ace[
-                "Ace"
-            ]["Mask"].hasPriv(
-                ldaptypes.ACCESS_ALLOWED_OBJECT_ACE.ADS_RIGHT_DS_CONTROL_ACCESS
-            ):
+            # Process object-specific ACE
+            elif ace["AceType"] == ldaptypes.ACCESS_ALLOWED_OBJECT_ACE.ACE_TYPE:
+                raw_mask = ace["Ace"]["Mask"]["Mask"]
+                mask = self.RIGHTS_TYPE(raw_mask)
+                control_access = bool(
+                    raw_mask
+                    & ldaptypes.ACCESS_ALLOWED_OBJECT_ACE.ADS_RIGHT_DS_CONTROL_ACCESS
+                )
 
-                mask = self.RIGHTS_TYPE(ace["Ace"]["Mask"]["Mask"])
-                self.aces[sid]["rights"] |= mask
-
-                # Extract the specific extended right (identified by UUID)
-                if ace["Ace"].hasFlag(
+                if not ace["Ace"].hasFlag(
                     ldaptypes.ACCESS_ALLOWED_OBJECT_ACE.ACE_OBJECT_TYPE_PRESENT
                 ):
-                    uuid = bin_to_string(ace["Ace"]["ObjectType"]).lower()
-                else:
-                    # If no specific GUID is provided, this grants all extended rights
+                    # Without an ObjectType the ACE applies to the whole object,
+                    # and control access means all extended rights
                     # https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/1522b774-6464-41a3-87a5-1e5633c3fbbb
-                    uuid = EXTENDED_RIGHTS_NAME_MAP["All-Extended-Rights"]
+                    self.aces[sid]["rights"] |= mask
+                    if control_access:
+                        self.aces[sid]["extended_rights"].append(
+                            EXTENDED_RIGHTS_NAME_MAP["All-Extended-Rights"]
+                        )
+                    continue
 
-                self.aces[sid]["extended_rights"].append(uuid)
+                # With an ObjectType the rights only cover that right or attribute,
+                # so they must not widen the object-wide rights mask
+                uuid = bin_to_string(ace["Ace"]["ObjectType"]).lower()
+                if control_access:
+                    self.aces[sid]["rights"] |= self.RIGHTS_TYPE(
+                        int(ActiveDirectoryRights.EXTENDED_RIGHT)
+                    )
+                    self.aces[sid]["extended_rights"].append(uuid)
+                if raw_mask & ActiveDirectoryRights.WRITE_PROPERTY:
+                    self.aces[sid]["write_properties"].append(uuid)
 
     def to_bytes(self) -> bytes:
         """

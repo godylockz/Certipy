@@ -26,11 +26,22 @@ import httpx
 import requests
 from asn1crypto import x509
 from impacket.dcerpc.v5 import rpcrt, rrp
+from impacket.uuid import bin_to_string
+from ldap3.utils.conv import escape_filter_chars
 
+from certipy.lib.bloodhound_export import (
+    CE_META_VERSION,
+    CEExporter,
+    ca_security_aces,
+    legacy_node,
+    load_certificates,
+    principal_type,
+    write_zip,
+)
 from certipy.lib.constants import (
-    EXTENDED_RIGHTS_MAP,
     EXTENDED_RIGHTS_NAME_MAP,
     OID_TO_STR_MAP,
+    PKI_ATTRIBUTE_GUIDS,
     USER_AGENT,
     ActiveDirectoryRights,
     CertificateAuthorityRights,
@@ -68,6 +79,8 @@ class Find:
         csv: bool = False,
         text: bool = False,
         stdout: bool = False,
+        bloodhound: bool = False,
+        old_bloodhound: bool = False,
         output: Optional[str] = None,
         trailing_output: str = "",
         enabled: bool = False,
@@ -85,6 +98,8 @@ class Find:
         self.csv = csv
         self.text = text or stdout
         self.stdout = stdout
+        self.bloodhound = bloodhound
+        self.old_bloodhound = old_bloodhound
         self.output = output
         self.trailing_output = trailing_output
         self.enabled = enabled
@@ -200,13 +215,18 @@ class Find:
                 "msPKI-Private-Key-Flag",
                 "msPKI-Certificate-Name-Flag",
                 "msPKI-Certificate-Policy",
+                "msPKI-Certificate-Application-Policy",
+                "msPKI-Cert-Template-OID",
                 "msPKI-Minimal-Key-Size",
                 "msPKI-RA-Signature",
+                "msPKI-RA-Policies",
                 "msPKI-Template-Schema-Version",
                 "msPKI-RA-Application-Policies",
                 "pKIExtendedKeyUsage",
                 "nTSecurityDescriptor",
                 "objectGUID",
+                "distinguishedName",
+                "description",
                 "whenCreated",
                 "whenChanged",
             ],
@@ -230,9 +250,101 @@ class Find:
                 "cACertificateDN",
                 "cACertificate",
                 "certificateTemplates",
+                "flags",
                 "objectGUID",
+                "distinguishedName",
+                "description",
+                "whenCreated",
+                "nTSecurityDescriptor",
             ],
+            query_sd=True,
         )
+
+    def get_pki_certificate_stores(self, container: str) -> List[LDAPEntry]:
+        """
+        Query a certificationAuthority container under Public Key Services.
+
+        Used for the BloodHound CE export: "Certification Authorities" holds the
+        trusted root CAs, "AIA" the intermediate CAs, and "NTAuthCertificates"
+        the NTAuth store.
+
+        Args:
+            container: Container name below CN=Public Key Services
+
+        Returns:
+            List of certificationAuthority entries
+        """
+        services = (
+            f"CN=Public Key Services,CN=Services,{self.connection.configuration_path}"
+        )
+        if container == "NTAuthCertificates":
+            search_base = f"CN=NTAuthCertificates,{services}"
+        else:
+            search_base = f"CN={container},{services}"
+
+        return self.connection.search(
+            "(objectClass=certificationAuthority)",
+            search_base=search_base,
+            attributes=[
+                "cn",
+                "name",
+                "cACertificate",
+                "crossCertificatePair",
+                "objectGUID",
+                "distinguishedName",
+                "description",
+                "whenCreated",
+                "nTSecurityDescriptor",
+            ],
+            query_sd=True,
+        )
+
+    def get_class_guids(self) -> Dict[str, str]:
+        """
+        Read the schemaIDGUIDs of the AD CS object classes.
+
+        Returns:
+            lDAPDisplayName -> lower-case schemaIDGUID
+        """
+        names = [
+            "pKICertificateTemplate",
+            "pKIEnrollmentService",
+            "certificationAuthority",
+            "msPKI-Enterprise-Oid",
+        ]
+        search_filter = "(|%s)" % "".join(f"(lDAPDisplayName={n})" for n in names)
+        guids = {}
+        for entry in self.connection.search(
+            search_filter,
+            search_base=f"CN=Schema,{self.connection.configuration_path}",
+            attributes=["lDAPDisplayName", "schemaIDGUID"],
+        ):
+            raw = entry.get_raw("schemaIDGUID")
+            raw = raw[0] if isinstance(raw, list) else raw
+            if raw:
+                guids[entry.get("lDAPDisplayName")] = bin_to_string(raw).lower()
+        return guids
+
+    def get_computer_sid(self, dns_host_name: str) -> Optional[str]:
+        """
+        Look up the objectSid of the computer hosting a CA.
+
+        Args:
+            dns_host_name: dNSHostName of the CA server
+
+        Returns:
+            Computer SID, or None if not found
+        """
+        if not dns_host_name:
+            return None
+        results = self.connection.search(
+            f"(&(objectClass=computer)(dNSHostName={escape_filter_chars(dns_host_name)}))",
+            attributes=["objectSid"],
+        )
+        if len(results) != 1:
+            logging.warning(f"Could not find computer object for {dns_host_name!r}")
+            return None
+        return results[0].get("objectSid")
 
     def get_issuance_policies(self) -> List[LDAPEntry]:
         """
@@ -252,6 +364,9 @@ class Find:
                 "msPKI-Cert-Template-OID",
                 "nTSecurityDescriptor",
                 "objectGUID",
+                "distinguishedName",
+                "description",
+                "whenCreated",
             ],
             query_sd=True,
         )
@@ -328,6 +443,11 @@ class Find:
             datetime.now().strftime("%Y%m%d%H%M%S") if not self.output else self.output
         )
         self._save_output(templates, cas, oids, prefix)
+
+        if self.bloodhound:
+            self._save_bloodhound_ce(templates, cas, oids, prefix)
+        if self.old_bloodhound:
+            self._save_bloodhound_legacy(templates, cas, oids, prefix)
 
     # =========================================================================
     # Certificate Authority (CA) Methods
@@ -1030,7 +1150,9 @@ class Find:
             prefix: Output file prefix
         """
         # Determine if default output format should be used
-        not_specified = not any([self.json, self.text, self.csv])
+        not_specified = not any(
+            [self.json, self.text, self.csv, self.bloodhound, self.old_bloodhound]
+        )
 
         # Generate output for text/JSON formats
         output = self.get_output_for_text_and_json(templates, cas, oids)
@@ -1108,6 +1230,189 @@ class Find:
             logging.info(f"Saving CA CSV output to {ca_output_path!r}")
             ca_output_path = try_to_save_file(ca_output, ca_output_path)
             logging.info(f"Wrote CA CSV output to {ca_output_path!r}")
+
+    def _resolve_principal(self, sid: str) -> Tuple[str, str]:
+        """Map a SID to a BloodHound principal id and node kind."""
+        entry = self.connection.lookup_sid(sid)
+        return (
+            str(entry.get("objectSid") or sid).upper(),
+            principal_type(entry.get("objectType")),
+        )
+
+    def _save_bloodhound_ce(
+        self,
+        templates: List[LDAPEntry],
+        cas: List[LDAPEntry],
+        oids: List[LDAPEntry],
+        prefix: str,
+    ) -> None:
+        """
+        Write a BloodHound CE zip with the AD CS objects.
+
+        Every template and CA is exported regardless of -enabled/-vulnerable;
+        BloodHound CE decides exploitability from the full graph.
+        """
+        domain_sid = self.connection.domain_sid
+        if not domain_sid:
+            logging.error(
+                "Could not determine the domain SID; skipping BloodHound CE output"
+            )
+            return
+
+        logging.info(
+            "Collecting root CAs, AIA CAs and the NTAuth store for BloodHound CE"
+        )
+        root_cas = self.get_pki_certificate_stores("Certification Authorities")
+        aia_cas = self.get_pki_certificate_stores("AIA")
+        ntauth_stores = self.get_pki_certificate_stores("NTAuthCertificates")
+
+        issuers = []
+        for entry in root_cas + aia_cas:
+            issuers.extend(load_certificates(entry.get("cACertificate")))
+
+        for ca in cas:
+            ca.set("hosting_computer_sid", self.get_computer_sid(ca.get("dNSHostName")))
+
+        for oid in oids:
+            group_dn = oid.get("msDS-OIDToGroupLink")
+            if group_dn:
+                results = self.connection.search(
+                    f"(distinguishedName={escape_filter_chars(group_dn)})",
+                    attributes=["objectSid"],
+                )
+                if len(results) == 1:
+                    oid.set("linked_group_sid", results[0].get("objectSid"))
+
+        exporter = CEExporter(
+            self.connection.domain or self.target.domain or "",
+            domain_sid,
+            self._resolve_principal,
+            self.get_class_guids(),
+        )
+
+        template_nodes = [exporter.template_node(t) for t in templates]
+        template_ids = {
+            t.get("cn"): node["ObjectIdentifier"]
+            for t, node in zip(templates, template_nodes)
+        }
+
+        files = {
+            "certtemplates": ("certtemplates", template_nodes, CE_META_VERSION),
+            "enterprisecas": (
+                "enterprisecas",
+                [exporter.enterprise_ca_node(ca, template_ids, issuers) for ca in cas],
+                CE_META_VERSION,
+            ),
+            "rootcas": (
+                "rootcas",
+                [exporter.root_ca_node(ca, issuers) for ca in root_cas],
+                CE_META_VERSION,
+            ),
+            "aiacas": (
+                "aiacas",
+                [exporter.aia_ca_node(ca, issuers) for ca in aia_cas],
+                CE_META_VERSION,
+            ),
+            "ntauthstores": (
+                "ntauthstores",
+                [exporter.ntauth_store_node(store) for store in ntauth_stores],
+                CE_META_VERSION,
+            ),
+            "issuancepolicies": (
+                "issuancepolicies",
+                [exporter.issuance_policy_node(oid) for oid in oids],
+                CE_META_VERSION,
+            ),
+        }
+
+        output_path = f"{prefix}_Certipy_BloodHound.zip"
+        logging.info(f"Saving BloodHound CE output to {output_path!r}")
+        output_path = try_to_save_file(write_zip(prefix, files), output_path)
+        logging.info(
+            f"Wrote BloodHound CE output to {output_path!r}. Upload it into the BloodHound "
+            "CE database that holds this domain's users, groups and computers"
+        )
+
+    def _save_bloodhound_legacy(
+        self,
+        templates: List[LDAPEntry],
+        cas: List[LDAPEntry],
+        oids: List[LDAPEntry],
+        prefix: str,
+    ) -> None:
+        """Write a legacy BloodHound 4.x zip, with templates and CAs as GPO nodes."""
+        domain = self.connection.domain or self.target.domain or ""
+        class_guids = self.get_class_guids()
+
+        def neo4j_safe(properties: Dict[str, Any]) -> Dict[str, Any]:
+            # Neo4j properties must be primitives or lists of primitives
+            safe = {}
+            for key, value in properties.items():
+                if isinstance(value, (bool, int, float, str)) or value is None:
+                    safe[key] = value
+                elif isinstance(value, (list, tuple, set)):
+                    safe[key] = [str(v) for v in value]
+                elif isinstance(value, dict):
+                    safe[key] = json.dumps(value, default=str)
+                else:
+                    safe[key] = str(value)
+            return safe
+
+        nodes = []
+        for template in templates:
+            nodes.append(
+                legacy_node(
+                    template,
+                    template.get("cn"),
+                    domain,
+                    "Certificate Template",
+                    neo4j_safe(self.get_template_properties(template)),
+                    self._resolve_principal,
+                    class_guids.get("pKICertificateTemplate"),
+                    template=True,
+                )
+            )
+
+        for ca in cas:
+            security = ca.get("security")
+            extra_aces = []
+            if security is not None:
+                extra_aces = ca_security_aces(security, self._resolve_principal)
+            nodes.append(
+                legacy_node(
+                    ca,
+                    ca.get("name"),
+                    domain,
+                    "Enrollment Service",
+                    neo4j_safe(self.get_ca_properties(ca)),
+                    self._resolve_principal,
+                    class_guids.get("pKIEnrollmentService"),
+                    extra_aces=extra_aces,
+                )
+            )
+
+        for oid in oids:
+            nodes.append(
+                legacy_node(
+                    oid,
+                    oid.get("displayName") or oid.get("cn"),
+                    domain,
+                    "Issuance Policy",
+                    neo4j_safe(self.get_oid_properties(oid)),
+                    self._resolve_principal,
+                    class_guids.get("msPKI-Enterprise-Oid"),
+                )
+            )
+
+        output_path = f"{prefix}_Certipy_BloodHound_legacy.zip"
+        logging.info(f"Saving legacy BloodHound output to {output_path!r}")
+        output_path = try_to_save_file(
+            write_zip(prefix, {"gpos": ("gpos", nodes, 4)}), output_path
+        )
+        logging.info(
+            f"Wrote legacy BloodHound output to {output_path!r}. Import it into "
+            "BloodHound 4.x; templates and CAs appear as GPO nodes"
+        )
 
     def get_output_for_text_and_json(
         self, templates: List[LDAPEntry], cas: List[LDAPEntry], oids: List[LDAPEntry]
@@ -1777,43 +2082,30 @@ class Find:
             (CertificateRights.GENERIC_ALL, [], "Full Control Principals"),
             (CertificateRights.WRITE_OWNER, [], "Write Owner Principals"),
             (CertificateRights.WRITE_DACL, [], "Write Dacl Principals"),
+            (CertificateRights.WRITE_PROPERTY, [], "Write Property Principals"),
         ]
 
-        # Process write property permissions
+        # Process write property permissions on single attributes
         write_permissions = {}
         for sid, rights in security.aces.items():
             # Skip admin principals if requested
             if self.hide_admins and is_admin_sid(sid):
                 continue
 
-            # Get rights information
-            extended_rights = rights["extended_rights"]
             ad_rights = rights["rights"]
             principal_name = self.connection.lookup_sid(sid).get("name")
 
-            # Check for each standard right type
+            # Object-wide rights. These do not depend on the extended right bit:
+            # a "Write" grant without "Enroll" is still ESC4 (issue #353)
             for right, principal_list, _ in rights_mapping:
-                if right in ad_rights and (
-                    ad_rights & ActiveDirectoryRights.EXTENDED_RIGHT
-                ):
+                if right in ad_rights:
                     principal_list.append(principal_name)
 
-            # Check for write property rights
-            can_write_property = (CertificateRights.WRITE_PROPERTY in ad_rights) and (
-                ad_rights & ActiveDirectoryRights.EXTENDED_RIGHT
-            )
-            if can_write_property:
-                for extended_right in extended_rights:
-                    # Resolve extended right name
-                    resolved_right = EXTENDED_RIGHTS_MAP.get(
-                        extended_right, extended_right
-                    )
-
-                    # Add principal to the list for this right
-                    principal_list = write_permissions.get(resolved_right, [])
-                    if principal_name not in principal_list:
-                        principal_list.append(principal_name)
-                    write_permissions[resolved_right] = principal_list
+            for attribute in rights.get("write_properties", []):
+                resolved_attribute = PKI_ATTRIBUTE_GUIDS.get(attribute, attribute)
+                principal_list = write_permissions.setdefault(resolved_attribute, [])
+                if principal_name not in principal_list:
+                    principal_list.append(principal_name)
 
         # Add write property rights
         for extended_right, principal_list in write_permissions.items():
@@ -2148,26 +2440,25 @@ class Find:
                 continue
 
             ad_rights = rights["rights"]
-            ad_extended_rights = rights["extended_rights"]
 
-            # Check for dangerous permissions
+            # Object-wide write access. The parser only sets WRITE_PROPERTY in
+            # the rights mask when it covers every attribute.
             dangerous_rights = [
                 CertificateRights.GENERIC_ALL,
                 CertificateRights.WRITE_OWNER,
                 CertificateRights.WRITE_DACL,
                 CertificateRights.GENERIC_WRITE,
+                CertificateRights.WRITE_PROPERTY,
             ]
 
-            if any(right in ad_rights for right in dangerous_rights):
-                vulnerable_acl_sids.append(sid)
-                has_vulnerable_acl = True
-                continue
+            # Writing the name or enrollment flag alone is enough to abuse the template
+            writes_pki_flags = any(
+                attribute in PKI_ATTRIBUTE_GUIDS
+                for attribute in rights.get("write_properties", [])
+            )
 
-            # WRITE_PROPERTY is only dangerous if you can write the entire object
-            if (
-                CertificateRights.WRITE_PROPERTY in ad_rights
-                and "00000000-0000-0000-0000-000000000000" in ad_extended_rights
-                and ad_rights & ActiveDirectoryRights.EXTENDED_RIGHT
+            if writes_pki_flags or any(
+                right in ad_rights for right in dangerous_rights
             ):
                 vulnerable_acl_sids.append(sid)
                 has_vulnerable_acl = True
