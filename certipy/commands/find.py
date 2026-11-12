@@ -38,6 +38,10 @@ from certipy.lib.bloodhound_export import (
     principal_type,
     write_zip,
 )
+from certipy.lib.certighost import (
+    EDITF_ENABLECHASECLIENTDC,
+    is_certighost_build_vulnerable,
+)
 from certipy.lib.ces import parse_enrollment_servers
 from certipy.lib.constants import (
     EXTENDED_RIGHTS_NAME_MAP,
@@ -569,6 +573,8 @@ class Find:
                     ca_properties = {
                         "user_specified_san": "Unknown",
                         "request_disposition": "Unknown",
+                        "client_dc_chase": "Unknown",
+                        "windows_build": "Unknown",
                         "enforce_encrypt_icertrequest": "Unknown",
                         "security": None,
                         "web_enrollment": {
@@ -613,6 +619,8 @@ class Find:
         ca_properties: Dict[str, Any] = {
             "user_specified_san": "Unknown",
             "request_disposition": "Unknown",
+            "client_dc_chase": "Unknown",
+            "windows_build": "Unknown",
             "enforce_encrypt_icertrequest": "Unknown",
             "security": None,
             "web_enrollment": {
@@ -645,6 +653,9 @@ class Find:
             disabled_extensions = "Unknown"
             security = None
             enrollment_agent_restrictions = None
+            client_dc_chase = "Unknown"
+            windows_build = "Unknown"
+            product_name = "Unknown"
 
             if ca_configuration is not None:
                 active_policy = ca_configuration.active_policy
@@ -678,6 +689,13 @@ class Find:
                 enrollment_agent_restrictions = (
                     ca_configuration.enrollment_agent_restrictions
                 )
+                client_dc_chase = (
+                    "Enabled"
+                    if ca_configuration.edit_flags & EDITF_ENABLECHASECLIENTDC
+                    else "Disabled"
+                )
+                windows_build = ca_configuration.windows_build or "Unknown"
+                product_name = ca_configuration.product_name or "Unknown"
 
             # Update properties
             ca_properties.update(
@@ -689,6 +707,9 @@ class Find:
                     "disabled_extensions": disabled_extensions,
                     "security": security,
                     "enrollment_agent_restrictions": enrollment_agent_restrictions,
+                    "client_dc_chase": client_dc_chase,
+                    "windows_build": windows_build,
+                    "product_name": product_name,
                 }
             )
 
@@ -2334,6 +2355,9 @@ class Find:
             "enforce_encrypt_icertrequest": "Enforce Encryption for Requests",
             "active_policy": "Active Policy",
             "disabled_extensions": "Disabled Extensions",
+            "client_dc_chase": "Client DC Chase",
+            "product_name": "CA Host OS",
+            "windows_build": "CA Host Build",
         }
 
         # Create properties dictionary
@@ -3010,6 +3034,30 @@ class Find:
                     "Other prerequisites may be required for this to be exploitable. See "
                     "the wiki for more details."
                 )
+
+        # CVE-2026-54121 (Certighost): unvalidated client-DC chase
+        chase_enabled = ca.get("client_dc_chase") == "Enabled"
+        build_vulnerable = is_certighost_build_vulnerable(
+            str(ca.get("windows_build", "Unknown"))
+        )
+        if chase_enabled and build_vulnerable is True:
+            vulnerabilities["CVE-2026-54121"] = (
+                "Client DC chase is enabled on an unpatched CA host."
+            )
+            remarks["CVE-2026-54121"] = (
+                "Apply the July 2026 security update. As a temporary mitigation, "
+                "disable EDITF_ENABLECHASECLIENTDC and restart CertSvc."
+            )
+        elif chase_enabled and build_vulnerable is False:
+            remarks["CVE-2026-54121"] = (
+                "CA host build is at or above the July 2026 fixed revision; verify "
+                "that Feature_3185813818 is enabled before treating it as patched."
+            )
+        elif chase_enabled and build_vulnerable is None:
+            remarks["CVE-2026-54121"] = (
+                "Client DC chase is enabled, but the CA host patch level could not "
+                "be classified."
+            )
 
         return (vulnerabilities, remarks, enrollable_principals, acl_principals)
 
