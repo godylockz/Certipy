@@ -88,6 +88,31 @@ def test_upn_falls_back_to_sam_account_name(
     assert fake.user_lookups == ["administrator"]
 
 
+def test_upn_in_other_domain_does_not_fall_back_to_sam_account_name(
+    make_ldap_entry: Callable[..., LDAPEntry],
+) -> None:
+    fake = FakeConnection(
+        users={"administrator": make_ldap_entry({"objectSid": ADMIN_SID})}
+    )
+    sid = lookup_object_sid(
+        _conn(fake), upn="administrator@root.local", domain="CHILD.ROOT.LOCAL"
+    )
+    assert sid is None
+    assert fake.user_lookups == []
+
+
+def test_upn_in_own_domain_falls_back_case_insensitively(
+    make_ldap_entry: Callable[..., LDAPEntry],
+) -> None:
+    fake = FakeConnection(
+        users={"administrator": make_ldap_entry({"objectSid": ADMIN_SID})}
+    )
+    sid = lookup_object_sid(
+        _conn(fake), upn="administrator@corp.local", domain="CORP.LOCAL"
+    )
+    assert sid == ADMIN_SID
+
+
 def test_upn_takes_precedence_over_dns(
     make_ldap_entry: Callable[..., LDAPEntry],
 ) -> None:

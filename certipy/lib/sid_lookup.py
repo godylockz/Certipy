@@ -21,6 +21,7 @@ def lookup_object_sid(
     connection: LDAPConnection,
     upn: Optional[str] = None,
     dns: Optional[str] = None,
+    domain: Optional[str] = None,
 ) -> Optional[str]:
     """
     Look up the objectSid of the principal named by a UPN or DNS host name.
@@ -29,10 +30,16 @@ def lookup_object_sid(
     part before '@', against sAMAccountName. The DNS name is matched against
     the dNSHostName of computer objects. If both are given, the UPN wins.
 
+    The sAMAccountName fallback covers the implicit UPN
+    (sAMAccountName@domain) of accounts without userPrincipalName set, so it
+    is skipped when the UPN suffix names a domain other than ``domain``.
+    Otherwise a same-named local account would supply the wrong SID.
+
     Args:
         connection: Connected LDAP connection
         upn: User principal name from -upn
         dns: DNS host name from -dns
+        domain: DNS name of the domain the connection queries
 
     Returns:
         The object SID, or None if nothing was given or nothing matched
@@ -43,11 +50,13 @@ def lookup_object_sid(
             f"(userPrincipalName={escape_filter_chars(upn)})",
             attributes=["objectSid"],
         )
+        account, _, suffix = upn.partition("@")
         if len(results) == 1:
             entry = results[0]
+        elif suffix and domain and suffix.lower() != domain.lower():
+            entry = None
         else:
-            sam_account_name = escape_filter_chars(upn.split("@")[0])
-            entry = connection.get_user(sam_account_name, silent=True)
+            entry = connection.get_user(escape_filter_chars(account), silent=True)
     elif dns:
         name = dns
         results = connection.search(
@@ -117,7 +126,7 @@ def resolve_alt_sid(
     try:
         connection = LDAPConnection(dc_target(target))
         connection.connect()
-        return lookup_object_sid(connection, upn=upn, dns=dns)
+        return lookup_object_sid(connection, upn=upn, dns=dns, domain=target.domain)
     except Exception as e:
         logging.warning(
             f"Object SID lookup failed: {e}. Continuing without a SID "
