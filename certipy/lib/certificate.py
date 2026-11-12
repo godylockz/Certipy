@@ -245,7 +245,26 @@ def print_certificate_serial_number(
     Args:
         certificate: X.509 certificate to analyze
     """
-    logging.info(f"Certificate serial number is {hex(certificate.serial_number)[2:]}")
+    logging.info(
+        f"Certificate serial number is {format_serial_number(certificate.serial_number)}"
+    )
+
+
+def format_serial_number(serial_number: int) -> str:
+    """
+    Format a certificate serial number the way the CA database stores it.
+
+    AD CS keeps serials as lowercase hex of whole bytes, so a leading zero
+    nibble must be kept for the value to match on revocation.
+
+    Args:
+        serial_number: Certificate serial number
+
+    Returns:
+        Even-length lowercase hex string
+    """
+    serial = f"{serial_number:x}"
+    return serial.zfill(len(serial) + len(serial) % 2)
 
 
 def print_certificate_identities(

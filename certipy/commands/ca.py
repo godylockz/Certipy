@@ -28,7 +28,14 @@ from impacket.ldap import ldaptypes
 from impacket.smbconnection import SMBConnection
 from impacket.uuid import string_to_bin, uuidtup_to_bin
 
-from certipy.lib.certificate import NameOID, create_pfx, der_to_cert, load_pfx, x509
+from certipy.lib.certificate import (
+    NameOID,
+    create_pfx,
+    der_to_cert,
+    format_serial_number,
+    load_pfx,
+    x509,
+)
 from certipy.lib.constants import CertificateAuthorityRights
 from certipy.lib.errors import handle_error, translate_error_code
 from certipy.lib.files import try_to_save_file
@@ -865,9 +872,19 @@ class CA:
             )
             return False
 
+        # Accept serials pasted as "61:00:...", "61 00 ..." or "0x6100..."
+        serial_number = self.serial_number.replace(":", "").replace(" ", "").lower()
+        serial_number = serial_number.removeprefix("0x")
+        try:
+            serial_number = format_serial_number(int(serial_number, 16))
+        except ValueError:
+            logging.error(f"Invalid certificate serial number {self.serial_number!r}")
+            return False
+        self.serial_number = serial_number
+
         request = ICertAdminDRevokeCertificate()
         request["pwszAuthority"] = checkNullString(self.ca)
-        request["pwszSerialNumber"] = checkNullString(self.serial_number)
+        request["pwszSerialNumber"] = checkNullString(serial_number)
         request["Reason"] = int(0)
 
         ft = FILETIME()
@@ -893,7 +910,7 @@ class CA:
 
         if error_code == 0:  # Success
             logging.info(
-                f"Successfully revoke certificate serial number {self.serial_number}"
+                f"Successfully revoked certificate serial number {self.serial_number}"
             )
             return True
         else:
