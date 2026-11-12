@@ -154,3 +154,20 @@ def test_from_options_kerberos_flag_skips_password_prompt(
     assert target.do_kerberos
     assert (target.username, target.domain) == ("ALICE", "CORP.LOCAL")
     assert target.password is None
+
+
+def test_from_options_schannel_pfx_skips_password_prompt(
+    resolver: FakeResolver, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr("getpass.getpass", lambda _prompt: pytest.fail("prompted"))
+    target = Target.from_options(_options(password=None, schannel_pfx="a.pfx"))
+    assert target.password is None
+
+
+def test_from_options_req_pfx_still_prompts_for_password(
+    resolver: FakeResolver, monkeypatch: pytest.MonkeyPatch
+):
+    # req -pfx is an enrollment agent or renewal certificate, not a credential
+    monkeypatch.setattr("getpass.getpass", lambda _prompt: "typed")
+    target = Target.from_options(_options(password=None, pfx="agent.pfx"))
+    assert target.password == "typed"

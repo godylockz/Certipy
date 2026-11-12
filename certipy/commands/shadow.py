@@ -74,21 +74,18 @@ class Shadow:
         self.out = out
         self.kwargs = kwargs
 
-        self.pfx = self.kwargs["pfx"]
-        self.key, self.cert = None, None
-
-        if self.pfx is not None:
-            pfx_password = None
-            if self.kwargs["pfxpassword"]:
-                pfx_password = self.kwargs["pfxpassword"].encode()
-
-            try:
-                with open(self.pfx, "rb") as f:
-                    pfx_data = f.read()
-                self.key, self.cert = load_pfx(pfx_data, pfx_password)
-            except Exception as e:
-                logging.error(f"Failed to load PFX file: {e}")
-                raise
+        # Optional certificate for Schannel LDAP authentication
+        self.schannel_auth: Optional[Tuple[x509.Certificate, PrivateKeyTypes]] = None
+        schannel_pfx = kwargs.get("schannel_pfx")
+        if schannel_pfx is not None:
+            pfx_password = kwargs.get("pfx_password")
+            with open(schannel_pfx, "rb") as f:
+                key, cert = load_pfx(
+                    f.read(), pfx_password.encode() if pfx_password else None
+                )
+            if key is None or cert is None:
+                raise Exception(f"No certificate and private key in {schannel_pfx!r}")
+            self.schannel_auth = (cert, key)
 
         self._connection = connection
 
@@ -106,20 +103,9 @@ class Shadow:
         if self._connection is not None:
             return self._connection
 
-        if self.cert and self.key:
-            self._connection = LDAPConnection(self.target, (self.cert, self.key))
-
-            try:
-                self._connection.schannel_connect()
-            except Exception as e:
-                logging.error(f"Failed to connect to LDAP server: {e}")
-                handle_error()
-
-            if self._connection.default_path is None:
-                logging.error("Failed to retrieve default naming context")
-        else:
-            self._connection = LDAPConnection(self.target)
-            self._connection.connect()
+        # connect() uses Schannel when a certificate is given
+        self._connection = LDAPConnection(self.target, self.schannel_auth)
+        self._connection.connect()
 
         return self._connection
 

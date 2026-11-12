@@ -140,7 +140,8 @@ class Target:
         # Authentication options
         principal = options.username if hasattr(options, "username") else None
         password = options.password if hasattr(options, "password") else None
-        pfx = options.pfx if hasattr(options, "pfx") else None
+        # A certificate used for Schannel LDAP authentication replaces the password
+        schannel_pfx = getattr(options, "schannel_pfx", None)
         hashes = options.hashes if hasattr(options, "hashes") else None
 
         do_kerberos = options.do_kerberos if hasattr(options, "do_kerberos") else False
@@ -198,7 +199,7 @@ class Target:
             and aes is None
             and no_pass is not True
             and do_kerberos is not True
-            and pfx is None
+            and schannel_pfx is None
         ):
             from getpass import getpass
 

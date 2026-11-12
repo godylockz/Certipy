@@ -101,14 +101,15 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> Tuple[str, Callable
     cert_group.add_argument(
         "-pfx",
         action="store",
+        dest="schannel_pfx",
         metavar="pfx/p12 file name",
-        help="Path to certificate and private key (PFX/P12 format)",
+        help="Authenticate to LDAP with this certificate (Schannel) instead of credentials",
     )
     cert_group.add_argument(
-        "-pfxpassword",
+        "-pfx-password",
         action="store",
-        metavar="password",
-        help="Password for the PFX/P12 file",
+        metavar="PFX file password",
+        help="Password for the PFX file",
     )
 
     # Add standard target arguments from shared module
