@@ -431,6 +431,20 @@ def test_enterprise_ca_node_with_registry_data(
     assert https["Collected"] and not https["Result"]["ADCSWebEnrollmentEPA"]
 
 
+def test_empty_disabled_extensions_count_as_collected(
+    make_ldap_entry: EntryFactory, pki: SimpleNamespace
+):
+    ca = ca_entry(
+        make_ldap_entry,
+        pki,
+        security=CASecurity(build_sd(ADMINS, [])),
+        disabled_extensions=[],
+    )
+    node = CEExporter("corp.local", DOMAIN_SID, resolve).enterprise_ca_node(ca, {}, [])
+    assert node["Properties"]["disabledextensionscollected"] is True
+    assert node["Properties"]["disabledextensions"] == []
+
+
 def test_enterprise_ca_node_dc_only(
     make_ldap_entry: EntryFactory, pki: SimpleNamespace
 ):
@@ -544,6 +558,12 @@ def test_write_zip_meta():
     assert payload["meta"]["type"] == "certtemplates"
     assert payload["meta"]["count"] == 1
     assert payload["meta"]["version"] == 6
+
+
+def test_write_zip_strips_output_directory():
+    data = write_zip("/tmp/out/run1", {"aiacas": ("aiacas", [], 6)})
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        assert archive.namelist() == ["run1_aiacas.json"]
 
 
 def test_legacy_node_is_gpo_shaped(make_ldap_entry: EntryFactory):

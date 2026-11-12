@@ -19,6 +19,7 @@ SharpHound/RustHound-CE property names that its AD CS analysis reads.
 import hashlib
 import io
 import json
+import os
 import zipfile
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
@@ -732,8 +733,10 @@ class CEExporter:
             "RPCEncryptionEnforced": result(
                 encrypt in ("Enabled", "Disabled"), reason, Value=encrypt == "Enabled"
             ),
+            # LDAPEntry.get returns None for an empty list, so an empty
+            # DisableExtensionList shows up as None once the config was read
             "DisabledExtensions": result(
-                isinstance(disabled, list),
+                config_read or isinstance(disabled, list),
                 reason,
                 Data=disabled if isinstance(disabled, list) else [],
             ),
@@ -783,7 +786,7 @@ def write_zip(
     Serialize BloodHound JSON files into an in-memory zip.
 
     Args:
-        path: Output prefix used for the member file names
+        path: Output prefix; only its base name is used for the member file names
         files: suffix -> (meta type, data, meta version)
 
     Returns:
@@ -802,7 +805,10 @@ def write_zip(
                     "collectorversion": "Certipy",
                 },
             }
-            archive.writestr(f"{path}_{suffix}.json", json.dumps(payload, default=str))
+            archive.writestr(
+                f"{os.path.basename(path)}_{suffix}.json",
+                json.dumps(payload, default=str),
+            )
     return buffer.getvalue()
 
 
