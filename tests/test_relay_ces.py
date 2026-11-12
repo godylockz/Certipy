@@ -1,10 +1,13 @@
 import argparse
 import base64
+import re
 from types import SimpleNamespace
 from typing import Any, Callable, List, Optional
 
 import httpx
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from certipy.commands import relay as relay_module
 from certipy.commands.parsers import relay as relay_parser
@@ -60,6 +63,7 @@ def _make_attack(
     template: Optional[str] = "User",
     username: str = "missandei",
     session_timeout: Optional[float] = 5.0,
+    key_type: str = "rsa",
 ) -> relay_module.ADCSHTTPAttackClient:
     client = httpx.Client(
         base_url="https://10.0.0.5",
@@ -76,6 +80,7 @@ def _make_attack(
         alt_sid=None,
         subject=None,
         key_size=2048,
+        key_type=key_type,
         application_policies=[],
         smime=None,
         archive_key=None,
@@ -132,6 +137,28 @@ def test_ces_attack_posts_wstep_and_saves(monkeypatch: pytest.MonkeyPatch):
         in seen["body"]
     )
     assert len(saved) == 1
+
+
+def test_ces_attack_honours_ec_key_type(monkeypatch: pytest.MonkeyPatch):
+    saved = _record_saves(monkeypatch)
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = request.content
+        return httpx.Response(
+            200,
+            content=_rstr(cert_token=base64.b64encode(_self_signed_der()).decode()),
+            headers={"Content-Type": "application/soap+xml"},
+        )
+
+    _make_attack(handler, key_type="ec")._request_certificate_ces()
+
+    assert isinstance(saved[0][1], ec.EllipticCurvePrivateKey)
+    token = re.search(rb"<BinarySecurityToken[^>]*>([^<]+)<", seen["body"])
+    assert token is not None
+    csr = x509.load_der_x509_csr(base64.b64decode(token.group(1)))
+    assert isinstance(csr.public_key(), ec.EllipticCurvePublicKey)
+    assert csr.is_signature_valid
 
 
 def test_ces_attack_fault_does_not_save(monkeypatch: pytest.MonkeyPatch):

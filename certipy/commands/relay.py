@@ -659,6 +659,7 @@ class ADCSHTTPAttackClient(ProtocolAttack):
             key_size=self.adcs_relay.key_size,
             application_policies=self.adcs_relay.application_policies,
             smime=self.adcs_relay.smime,
+            key_type=self.adcs_relay.key_type,
         )
         csr_der = csr_to_der(csr)
 
