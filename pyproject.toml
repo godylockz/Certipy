@@ -46,6 +46,9 @@ Homepage = "https://github.com/ly4k/Certipy"
 
 [project.scripts]
 certipy = "certipy.entry:main"
+# Same command under the Kali package name, so a pipx install shadows the
+# apt certipy-ad in /usr/bin
+certipy-ad = "certipy.entry:main"
 
 [tool.setuptools]
 packages = [
