@@ -20,6 +20,7 @@ MINIMAL_ARGV = {
     "auth": ["-pfx", "admin.pfx"],
     "ca": [],
     "cert": [],
+    "esc5": ["audit"],
     "find": [],
     "parse": ["dump.reg"],
     "forge": [],
