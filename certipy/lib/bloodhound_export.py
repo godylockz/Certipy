@@ -795,15 +795,11 @@ def write_zip(
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         for suffix, (data_type, data, version) in files.items():
+            # Only type/count/version: legacy BloodHound reads the version with a
+            # loose regex that would also match a "collectorversion" key
             payload = {
                 "data": data,
-                "meta": {
-                    "methods": 0,
-                    "type": data_type,
-                    "count": len(data),
-                    "version": version,
-                    "collectorversion": "Certipy",
-                },
+                "meta": {"type": data_type, "count": len(data), "version": version},
             }
             archive.writestr(
                 f"{os.path.basename(path)}_{suffix}.json",

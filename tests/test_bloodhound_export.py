@@ -557,7 +557,7 @@ def test_write_zip_meta():
         payload = json.loads(archive.read("20260101_certtemplates.json"))
     assert payload["meta"]["type"] == "certtemplates"
     assert payload["meta"]["count"] == 1
-    assert payload["meta"]["version"] == 6
+    assert payload["meta"] == {"type": "certtemplates", "count": 1, "version": 6}
 
 
 def test_write_zip_strips_output_directory():
