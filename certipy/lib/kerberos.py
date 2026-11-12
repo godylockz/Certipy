@@ -68,6 +68,67 @@ KRB_CLOCK_SKEW = 300  # 5 minutes in seconds
 AUTH_DATA_AP_OPTIONS = 143  # AD-AUTH-DATA-AP-OPTIONS type
 KRB_OID = b"\x06\t*\x86H\x86\xf7\x12\x01\x02\x02"  # Kerberos OID: 1.2.840.113554.1.2.2
 
+
+def kdc_clock_skew(
+    error: KerberosError, now: Optional[datetime.datetime] = None
+) -> Optional[float]:
+    """
+    Measure the clock difference to the KDC from a KRB-ERROR.
+
+    Every KRB-ERROR carries the KDC's time (stime/susec), so the skew can be
+    measured whatever error code the KDC chose. Windows KDCs answer a PKINIT
+    request from a skewed client with KDC_ERR_CLIENT_NOT_TRUSTED instead of
+    KRB_AP_ERR_SKEW.
+
+    Args:
+        error: Kerberos error raised by impacket
+        now: Local time to compare against (defaults to the current UTC time)
+
+    Returns:
+        Seconds the KDC is ahead of the local clock (negative if behind),
+        or None if the error carries no server time
+    """
+    # impacket leaves this untyped (its default is 0)
+    packet: Any = error.getErrorPacket()
+    if not packet:
+        return None
+    try:
+        server_time = KerberosTime.from_asn1(packet["stime"]).replace(
+            tzinfo=datetime.timezone.utc
+        )
+        susec = packet["susec"]
+        if susec.hasValue():
+            server_time += datetime.timedelta(microseconds=int(susec))
+    except Exception:
+        return None
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    return (server_time - now).total_seconds()
+
+
+def clock_skew_message(
+    error: KerberosError, now: Optional[datetime.datetime] = None
+) -> Optional[str]:
+    """
+    Explain a Kerberos failure caused by clock skew, if that is the cause.
+
+    Args:
+        error: Kerberos error raised by impacket
+        now: Local time to compare against (defaults to the current UTC time)
+
+    Returns:
+        A message naming the measured skew, or None if the clocks agree
+    """
+    skew = kdc_clock_skew(error, now)
+    if skew is None or abs(skew) <= KRB_CLOCK_SKEW:
+        return None
+    direction = "behind" if skew > 0 else "ahead of"
+    return (
+        f"Local clock is {abs(skew):.0f} seconds {direction} the KDC "
+        f"(Kerberos allows {KRB_CLOCK_SKEW}). Sync the time with the domain "
+        "controller (e.g. 'sudo ntpdate <dc-ip>') or run Certipy under faketime"
+    )
+
+
 # Cache for TGT and TGS tickets to avoid redundant authentication
 # Keys: (username, domain, lmhash, nthash, aeskey, kdc_host)
 TGT_CACHE: Dict[
@@ -925,6 +986,9 @@ def get_tgs(
                     raise
             else:
                 logging.error(f"Kerberos error: {e} (Error code: {e.getErrorCode()})")
+                skew_message = clock_skew_message(e)
+                if skew_message:
+                    logging.error(skew_message)
                 raise
         except Exception as e:
             # Handle other exceptions with more detailed error messages

@@ -61,6 +61,7 @@ from certipy.lib.certificate import (
 )
 from certipy.lib.errors import KRB5_ERROR_MESSAGES, handle_error
 from certipy.lib.files import try_to_save_file
+from certipy.lib.kerberos import clock_skew_message
 from certipy.lib.ldap import LDAPConnection
 from certipy.lib.logger import logging
 from certipy.lib.pkinit import build_pkinit_as_req
@@ -593,6 +594,14 @@ class Authenticate:
             # Send Kerberos AS-REQ
             tgt = sendReceive(as_req, domain, self.target.target_ip)
         except KerberosError as e:
+            # A skewed clock can surface as KDC_ERR_CLIENT_NOT_TRUSTED (issue #332),
+            # so check the KDC's time before trusting the error code
+            skew_message = clock_skew_message(e)
+            if skew_message:
+                logging.error(f"Got error while trying to request TGT: {e}")
+                logging.error(skew_message)
+                return False
+
             # Handle Kerberos errors with helpful messages
             if e.getErrorCode() not in KRB5_ERROR_MESSAGES:
                 logging.error(f"Got unknown Kerberos error: {e.getErrorCode():#x}")
