@@ -190,6 +190,7 @@ class Authenticate:
         no_hash: bool = False,
         print: bool = False,
         kirbi: bool = False,
+        out: Optional[str] = None,
         ldap_shell: bool = False,
         **kwargs,  # type: ignore
     ):
@@ -208,6 +209,7 @@ class Authenticate:
             no_hash: Don't extract NT hash
             print: Print ticket information
             kirbi: Save credential cache in Kirbi format
+            out: Path for the saved ticket (default: <username>.ccache or .kirbi)
             ldap_shell: Launch interactive LDAP shell after authentication
             ldap_port: LDAP port (default: 389 for ldap, 636 for ldaps)
             ldap_scheme: LDAP scheme (ldap or ldaps)
@@ -226,6 +228,7 @@ class Authenticate:
         self.no_hash = no_hash
         self.print = print
         self.kirbi = kirbi
+        self.out = out
         self.ldap_shell = ldap_shell
         self.kwargs = kwargs
 
@@ -247,6 +250,30 @@ class Authenticate:
             except Exception as e:
                 logging.error(f"Failed to load PFX file: {e}")
                 raise
+
+    def save_ticket(self, ccache: CCache, username: str) -> str:
+        """
+        Save the TGT as a ccache, or as a Kirbi file with -kirbi.
+
+        Args:
+            ccache: Credential cache holding the TGT
+            username: Authenticated username, used for the default file name
+
+        Returns:
+            Path the ticket was written to
+        """
+        extension = "kirbi" if self.kirbi else "ccache"
+        output_path = self.out or f"{username.rstrip('$')}.{extension}"
+        if self.kirbi:
+            logging.info(f"Saving Kirbi file to {output_path!r}")
+            saved_path = try_to_save_file(ccache.toKRBCRED(), output_path)
+            logging.info(f"Wrote Kirbi file to {saved_path!r}")
+        else:
+            logging.info(f"Saving credential cache to {output_path!r}")
+            saved_path = try_to_save_file(ccache.getData(), output_path)
+            self.ccache_name = saved_path
+            logging.info(f"Wrote credential cache to {saved_path!r}")
+        return saved_path
 
     def authenticate(
         self,
@@ -716,16 +743,7 @@ class Authenticate:
 
         # Save ticket to file if requested
         if not self.no_save:
-            if self.kirbi:
-                kirbi_name = f"{username.rstrip('$')}.kirbi"
-                logging.info(f"Saving Kirbi file to {kirbi_name!r}")
-                saved_path = try_to_save_file(ccache.toKRBCRED(), kirbi_name)
-                logging.info(f"Wrote Kirbi file to {saved_path!r}")
-            else:
-                self.ccache_name = f"{username.rstrip('$')}.ccache"
-                logging.info(f"Saving credential cache to {self.ccache_name!r}")
-                saved_path = try_to_save_file(ccache.getData(), self.ccache_name)
-                logging.info(f"Wrote credential cache to {saved_path!r}")
+            self.save_ticket(ccache, username)
 
         # Extract NT hash if requested
         if not self.no_hash:

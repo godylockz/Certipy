@@ -87,6 +87,12 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> Tuple[str, Callable
         action="store_true",
         help="Save Kerberos TGT in Kirbi format (default is ccache)",
     )
+    output_group.add_argument(
+        "-out",
+        action="store",
+        metavar="outfile",
+        help="Path to save the Kerberos TGT to (default: <username>.ccache or <username>.kirbi)",
+    )
 
     # Connection options
     conn_group = subparser.add_argument_group("connection options")
