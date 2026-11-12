@@ -290,8 +290,9 @@ def test_parse_invalid_certificate_token():
         b"<not-xml",
         b"x" * (MAX_RESPONSE_SIZE + 1),
         b'<?xml version="1.0" encoding="bogus-enc"?><a/>',
+        b'<!DOCTYPE a [<!ENTITY x "y">]><a>&x;</a>',
     ],
-    ids=["empty", "malformed", "oversized", "unknown-encoding"],
+    ids=["empty", "malformed", "oversized", "unknown-encoding", "dtd"],
 )
 def test_parse_rejects_bad_bodies(data: bytes):
     with pytest.raises(CESError):
@@ -339,6 +340,17 @@ def test_parse_enrollment_servers_sorts_by_priority_and_skips_malformed():
     ]
     assert servers[0].auth_names == ["UsernameAndPassword"]
     assert servers[0].renewals_only is True
+
+
+def test_parse_enrollment_servers_crlf_and_four_fields():
+    crlf = GOAD_VALUE.replace("\n", "\r\n")
+    legacy = "2\n2\n0\nhttps://c/ca_CES_Kerberos/service.svc/CES"
+    servers = parse_enrollment_servers([crlf, legacy])
+    assert [s.uri for s in servers] == [
+        "https://braavos.essos.local/ESSOS-CA_CES_Kerberos/service.svc/CES",
+        "https://c/ca_CES_Kerberos/service.svc/CES",
+    ]
+    assert servers[1].key_based_renewal is False
 
 
 def test_parse_enrollment_servers_empty():

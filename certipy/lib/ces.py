@@ -313,6 +313,9 @@ def parse_wstep_response(data: bytes) -> WstepResponse:
         raise CESError("CES returned an empty response")
     if len(data) > MAX_RESPONSE_SIZE:
         raise CESError(f"CES response exceeds {MAX_RESPONSE_SIZE} bytes")
+    # SOAP forbids DTDs; refusing them keeps entity tricks away from the parser
+    if b"<!DOCTYPE" in data or b"<!ENTITY" in data:
+        raise CESError("CES returned XML with a DTD")
 
     try:
         root = ElementTree.fromstring(data)
@@ -393,6 +396,8 @@ def parse_enrollment_servers(
 
     Each value is five newline-separated fields:
     Priority, Authentication, AllowRenewalsOnly, URI, AllowKeyBasedRenewal.
+    Values written before key-based renewal existed (Windows Server 2012 R2)
+    have only the first four. Lines may end in CRLF.
 
     Args:
         values: Raw attribute values (strings), or None
@@ -402,8 +407,8 @@ def parse_enrollment_servers(
     """
     servers = []
     for value in values or []:
-        fields = str(value).split("\n")
-        if len(fields) < 5:
+        fields = str(value).splitlines()
+        if len(fields) < 4:
             continue
         try:
             priority = int(fields[0])
@@ -420,7 +425,7 @@ def parse_enrollment_servers(
                 auth_names=decode_enrollment_auth(authentication),
                 renewals_only=fields[2].strip() == "1",
                 uri=uri,
-                key_based_renewal=fields[4].strip() == "1",
+                key_based_renewal=len(fields) > 4 and fields[4].strip() == "1",
             )
         )
 

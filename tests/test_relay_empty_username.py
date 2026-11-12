@@ -194,6 +194,7 @@ def make_relay_stub() -> SimpleNamespace:
         attack_lock=threading.Lock(),
         no_skip=False,
         enum_templates=False,
+        ces=False,
         request_id=None,
         subject=None,
         alt_dns=None,

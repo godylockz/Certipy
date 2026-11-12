@@ -1739,6 +1739,7 @@ class Find:
             f"Wrote legacy BloodHound output to {output_path!r}. Import it into "
             "BloodHound 4.x; templates and CAs appear as GPO nodes"
         )
+
     def _format_ces_for_text(self, output: Dict[str, Any]) -> Dict[str, Any]:
         """
         Render CES endpoints as readable strings for text output only.
